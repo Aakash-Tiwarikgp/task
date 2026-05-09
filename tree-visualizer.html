@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>TreeFlow — Visual Tree Renderer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@300;400;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width:100%; height:100%; background:#0a0f1a; overflow:hidden; }
+
+  #app { display:flex; flex-direction:column; width:100vw; height:100vh; }
+
+  /* ── Header ── */
+  #header {
+    flex-shrink:0;
+    display:flex; align-items:center; gap:16px;
+    padding:12px 22px;
+    background:rgba(10,15,26,0.97);
+    border-bottom:1px solid #1e2d3d;
+    z-index:200;
+    backdrop-filter:blur(10px);
+  }
+  .logo {
+    width:34px; height:34px; border-radius:9px;
+    background:linear-gradient(135deg,#3b82f6,#8b5cf6);
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0;
+  }
+  .title { color:#e2e8f0; font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:700; letter-spacing:.5px; }
+
+  .search-wrap { position:relative; flex:1; max-width:280px; }
+  .search-wrap svg { position:absolute; left:10px; top:50%; transform:translateY(-50%); opacity:.45; pointer-events:none; }
+  #search {
+    width:100%; padding:7px 12px 7px 32px;
+    background:#111827; border:1px solid #1e2d3d; border-radius:8px;
+    color:#e2e8f0; font-family:'IBM Plex Sans',sans-serif; font-size:13px;
+    outline:none; transition:border-color .2s;
+  }
+  #search:focus { border-color:#3b82f6; }
+  #search::placeholder { color:#475569; }
+
+  .btn {
+    padding:6px 14px; background:transparent; border-radius:7px;
+    font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:700;
+    cursor:pointer; transition:background .15s; letter-spacing:.3px;
+  }
+  .btn-blue  { border:1px solid #3b82f6; color:#3b82f6; }
+  .btn-blue:hover  { background:#3b82f620; }
+  .btn-amber { border:1px solid #f59e0b; color:#f59e0b; }
+  .btn-amber:hover { background:#f59e0b20; }
+
+  .legend { display:flex; gap:14px; align-items:center; margin-left:auto; }
+  .legend-dot { width:8px; height:8px; border-radius:50%; }
+  .legend-label { color:#64748b; font-size:11px; font-family:'IBM Plex Sans',sans-serif; }
+
+  /* ── Canvas area ── */
+  #canvas-wrap { flex:1; position:relative; overflow:hidden; }
+  #canvas { position:absolute; top:0; left:0; }
+
+  /* ── SVG edges ── */
+  #svg-layer { position:absolute; top:0; left:0; pointer-events:none; overflow:visible; }
+
+  /* ── Nodes ── */
+  .tree-node {
+    position:absolute;
+    width:140px; height:52px;
+    border-radius:8px;
+    border:1px solid rgba(255,255,255,.1);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    cursor:pointer;
+    transition:box-shadow .18s, background .18s, transform .22s ease;
+    user-select:none;
+    background:linear-gradient(135deg,#1e2d3d,#243447);
+    box-shadow:0 4px 20px rgba(0,0,0,.35);
+  }
+  .tree-node:hover { transform:translateY(-1px); }
+  .tree-node.hovered  { background:linear-gradient(135deg,#1c2a3a,#1e3a5f) !important; box-shadow:0 0 0 2px #60a5fa, 0 4px 20px rgba(0,0,0,.4) !important; }
+  .tree-node.selected { background:linear-gradient(135deg,#1e3a5f,#1e40af) !important; box-shadow:0 0 0 3px #f59e0b, 0 4px 20px rgba(0,0,0,.5) !important; }
+  .tree-node.match    { background:linear-gradient(135deg,#064e3b,#065f46) !important; box-shadow:0 0 0 3px #34d399, 0 4px 20px rgba(0,0,0,.4) !important; }
+
+  .node-label { color:#e2e8f0; font-family:'IBM Plex Mono',monospace; font-size:13px; font-weight:600; letter-spacing:.3px; }
+  .node-meta  { color:#64748b; font-family:'IBM Plex Sans',sans-serif; font-size:10px; margin-top:2px; }
+  .node-label.match-text { color:#6ee7b7; }
+
+  .toggle-badge {
+    position:absolute; bottom:-11px; left:50%; transform:translateX(-50%);
+    width:20px; height:20px; border-radius:50%;
+    border:2px solid #0a0f1a;
+    display:flex; align-items:center; justify-content:center;
+    font-size:14px; font-weight:800; color:#fff; line-height:1;
+    box-shadow:0 2px 8px rgba(0,0,0,.5);
+    z-index:5; transition:background .2s;
+  }
+  .toggle-badge.expanded  { background:#3b82f6; }
+  .toggle-badge.collapsed { background:#f59e0b; }
+
+  .count-chip {
+    position:absolute; top:-8px; right:-8px;
+    background:#f59e0b; border:2px solid #0a0f1a;
+    border-radius:10px; padding:1px 6px;
+    font-size:10px; font-weight:700; color:#0a0f1a;
+    font-family:'IBM Plex Mono',monospace;
+  }
+
+  /* ── Info panel ── */
+  #info-panel {
+    position:absolute; top:16px; right:16px;
+    background:rgba(15,23,42,.97); border:1px solid #1e3a5f; border-radius:10px;
+    padding:14px 18px; min-width:185px;
+    backdrop-filter:blur(12px);
+    box-shadow:0 8px 32px rgba(0,0,0,.55);
+    display:none; z-index:100;
+  }
+  .panel-sub   { color:#64748b; font-size:10px; font-family:'IBM Plex Mono',monospace; letter-spacing:1px; text-transform:uppercase; margin-bottom:8px; }
+  .panel-name  { color:#e2e8f0; font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:700; margin-bottom:3px; }
+  .panel-meta2 { color:#64748b; font-size:12px; margin-bottom:9px; font-family:'IBM Plex Sans',sans-serif; }
+  .panel-chips { display:flex; gap:7px; margin-bottom:10px; }
+  .chip {
+    background:#1e2d3d; border-radius:6px; padding:4px 9px;
+    font-size:11px; color:#94a3b8; font-family:'IBM Plex Mono',monospace;
+  }
+  .chip span { color:#60a5fa; }
+  .chip span.amber { color:#f59e0b; }
+  #deselect-btn {
+    width:100%; padding:5px 0; background:transparent;
+    border:1px solid #334155; border-radius:6px;
+    color:#64748b; font-size:11px; cursor:pointer;
+    font-family:'IBM Plex Mono',monospace;
+    transition:border-color .15s;
+  }
+  #deselect-btn:hover { border-color:#94a3b8; }
+
+  /* ── Hint ── */
+  #hint {
+    position:absolute; bottom:18px; left:50%; transform:translateX(-50%);
+    color:#1e3a5f; font-size:11px; font-family:'IBM Plex Mono',monospace;
+    pointer-events:none; white-space:nowrap; letter-spacing:.5px;
+  }
+
+  /* ── Minimap ── */
+  #minimap {
+    position:absolute; bottom:18px; right:18px;
+    width:150px; height:90px;
+    background:rgba(15,23,42,.85); border:1px solid #1e2d3d; border-radius:8px;
+    overflow:hidden; pointer-events:none;
+  }
+
+  /* ── Panning / zooming cursor ── */
+  #canvas-wrap.panning { cursor:grabbing; }
+  #canvas-wrap:not(.panning) { cursor:grab; }
+
+  /* Edge arrowhead */
+  marker#arrow path { fill:#6b7280; }
+
+  @keyframes fadeIn { from{opacity:0;transform:scale(.97)} to{opacity:1;transform:scale(1)} }
+  .tree-node { animation:fadeIn .18s ease; }
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <div id="header">
+    <div class="logo">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="2.5" r="2" fill="white"/>
+        <circle cx="2.5" cy="13" r="2" fill="white"/>
+        <circle cx="13.5" cy="13" r="2" fill="white"/>
+        <line x1="8" y1="4.5" x2="2.5" y2="11" stroke="white" stroke-width="1.3"/>
+        <line x1="8" y1="4.5" x2="13.5" y2="11" stroke="white" stroke-width="1.3"/>
+      </svg>
+    </div>
+    <span class="title">TreeFlow</span>
+
+    <div class="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input id="search" type="text" placeholder="Search nodes…"/>
+    </div>
+
+    <button class="btn btn-blue"  id="expand-all">Expand All</button>
+    <button class="btn btn-amber" id="collapse-all">Collapse All</button>
+
+    <div class="legend">
+      <div style="display:flex;align-items:center;gap:5px"><div class="legend-dot" style="background:#3b82f6"></div><span class="legend-label">Expanded</span></div>
+      <div style="display:flex;align-items:center;gap:5px"><div class="legend-dot" style="background:#f59e0b"></div><span class="legend-label">Collapsed</span></div>
+      <div style="display:flex;align-items:center;gap:5px"><div class="legend-dot" style="background:#34d399"></div><span class="legend-label">Match</span></div>
+    </div>
+  </div>
+
+  <!-- Canvas -->
+  <div id="canvas-wrap">
+    <div id="canvas">
+      <svg id="svg-layer">
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L8,3 z"/>
+          </marker>
+        </defs>
+        <g id="edges"></g>
+      </svg>
+      <div id="nodes-layer"></div>
+    </div>
+
+    <!-- Info panel -->
+    <div id="info-panel">
+      <div class="panel-sub">Selected Node</div>
+      <div class="panel-name" id="p-name">—</div>
+      <div class="panel-meta2" id="p-meta">—</div>
+      <div class="panel-chips">
+        <div class="chip">id: <span id="p-id">—</span></div>
+        <div class="chip">children: <span class="amber" id="p-children">0</span></div>
+      </div>
+      <button id="deselect-btn">Deselect</button>
+    </div>
+
+    <div id="hint">Click a node to select · Click ± to expand/collapse</div>
+    <div id="minimap"></div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+// TREE DATA
+// ════════════════════════════════════════════════════════
+const TREE = {
+  id:"root", label:"Root", meta:"Top-level node",
+  children:[
+    { id:"A", label:"Node A", meta:"Branch A", children:[
+      { id:"A1", label:"A1", meta:"Leaf", children:[] },
+      { id:"A2", label:"A2", meta:"Leaf", children:[] },
+      { id:"A3", label:"A3", meta:"Leaf", children:[] },
+    ]},
+    { id:"B", label:"Node B", meta:"Branch B", children:[
+      { id:"B1", label:"B1", meta:"Sub-branch", children:[
+        { id:"B1a", label:"B1-α", meta:"Deep leaf", children:[] },
+        { id:"B1b", label:"B1-β", meta:"Deep leaf", children:[] },
+      ]},
+      { id:"B2", label:"B2", meta:"Leaf", children:[] },
+    ]},
+    { id:"C", label:"Node C", meta:"Branch C", children:[
+      { id:"C1", label:"C1", meta:"Leaf", children:[] },
+      { id:"C2", label:"C2", meta:"Leaf", children:[] },
+    ]},
+    { id:"D", label:"Node D", meta:"Lone leaf", children:[] },
+  ]
+};
+
+// ════════════════════════════════════════════════════════
+// CONSTANTS & STATE
+// ════════════════════════════════════════════════════════
+const NW=140, NH=52, HGAP=32, VGAP=96;
+let collapsed = new Set();
+let selected  = null;
+let hovered   = null;
+let searchQ   = "";
+let pan = {x:0,y:0}, zoom=1, dragging=false, dragStart={x:0,y:0}, panStart={x:0,y:0};
+let positions = {};   // id → {x,y}
+
+// ════════════════════════════════════════════════════════
+// LAYOUT
+// ════════════════════════════════════════════════════════
+function visibleTree(n) {
+  if(collapsed.has(n.id)) return {...n, children:[]};
+  return {...n, children:(n.children||[]).map(visibleTree)};
+}
+
+function measure(n) {
+  if(!n.children||n.children.length===0) return NW;
+  const total = n.children.reduce((s,c)=>s+measure(c),0);
+  return Math.max(NW, total + (n.children.length-1)*HGAP);
+}
+
+function assign(n,x,y) {
+  const w=measure(n);
+  positions[n.id]={x: x+w/2-NW/2, y};
+  if(n.children&&n.children.length>0){
+    let cur=x;
+    for(const c of n.children){
+      assign(c,cur,y+NH+VGAP);
+      cur+=measure(c)+HGAP;
+    }
+  }
+}
+
+function computeLayout() {
+  positions={};
+  const vt=visibleTree(TREE);
+  assign(vt,0,0);
+}
+
+// ════════════════════════════════════════════════════════
+// BUILD FLAT NODE + EDGE LIST
+// ════════════════════════════════════════════════════════
+function flattenVisible(n, parent, result={nodes:[],edges:[]}) {
+  result.nodes.push({node:n, parent});
+  if(n.children){
+    for(const c of n.children){
+      result.edges.push({from:n.id, to:c.id});
+      flattenVisible(c, n.id, result);
+    }
+  }
+  return result;
+}
+
+// ════════════════════════════════════════════════════════
+// RENDER
+// ════════════════════════════════════════════════════════
+const nodesLayer = document.getElementById("nodes-layer");
+const edgesEl    = document.getElementById("edges");
+const svgLayer   = document.getElementById("svg-layer");
+
+function render() {
+  computeLayout();
+  const vt = visibleTree(TREE);
+  const {nodes, edges} = flattenVisible(vt, null);
+
+  // Compute bounding box to size SVG
+  const xs = Object.values(positions).map(p=>p.x);
+  const ys = Object.values(positions).map(p=>p.y);
+  const minX = Math.min(...xs)-60, minY = Math.min(...ys)-60;
+  const maxX = Math.max(...xs)+NW+60, maxY = Math.max(...ys)+NH+60;
+  const svgW = maxX-minX, svgH = maxY-minY;
+  svgLayer.setAttribute("viewBox",`${minX} ${minY} ${svgW} ${svgH}`);
+  svgLayer.style.width = svgW+"px";
+  svgLayer.style.height= svgH+"px";
+  svgLayer.style.left  = minX+"px";
+  svgLayer.style.top   = minY+"px";
+
+  // ── Edges ──
+  edgesEl.innerHTML="";
+  for(const {from,to} of edges){
+    const p1=positions[from], p2=positions[to];
+    if(!p1||!p2) continue;
+    const x1=p1.x+NW/2, y1=p1.y+NH;
+    const x2=p2.x+NW/2, y2=p2.y;
+    const mx1=x1, my1=(y1+y2)/2;
+    const mx2=x2, my2=(y1+y2)/2;
+    const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+    path.setAttribute("d",`M${x1},${y1} C${mx1},${my1} ${mx2},${my2} ${x2},${y2}`);
+    path.setAttribute("stroke","#374151");
+    path.setAttribute("stroke-width","1.5");
+    path.setAttribute("fill","none");
+    path.setAttribute("marker-end","url(#arrow)");
+    edgesEl.appendChild(path);
+  }
+
+  // ── Nodes ──
+  // Reconcile: remove old, add new
+  const existingIds = new Set([...nodesLayer.querySelectorAll(".tree-node")].map(el=>el.dataset.id));
+  const newIds = new Set(nodes.map(({node})=>node.id));
+  // remove stale
+  nodesLayer.querySelectorAll(".tree-node").forEach(el=>{
+    if(!newIds.has(el.dataset.id)) el.remove();
+  });
+
+  for(const {node} of nodes){
+    const pos = positions[node.id];
+    const isMatch = searchQ && node.label.toLowerCase().includes(searchQ.toLowerCase());
+    const isColl  = collapsed.has(node.id);
+    const hasC    = (node.children&&node.children.length>0)||isColl;
+    // Find original children count
+    const origNode = findNode(TREE, node.id);
+    const origChildCount = origNode?.children?.length??0;
+
+    let el = nodesLayer.querySelector(`.tree-node[data-id="${node.id}"]`);
+    if(!el){
+      el = document.createElement("div");
+      el.className="tree-node";
+      el.dataset.id = node.id;
+      el.innerHTML=`
+        <span class="node-label" data-role="label"></span>
+        <span class="node-meta"  data-role="meta"></span>
+      `;
+      nodesLayer.appendChild(el);
+
+      // Events
+      el.addEventListener("mouseenter",()=>{ hovered=node.id; updateClasses(); });
+      el.addEventListener("mouseleave",()=>{ hovered=null;     updateClasses(); });
+      el.addEventListener("click", (e)=>{
+        // toggle collapse if badge area (~bottom 20px)
+        const rect=el.getBoundingClientRect();
+        const relY = e.clientY - rect.top;
+        if(relY > NH-16 && hasC){
+          toggleCollapse(node.id);
+        } else {
+          selected = (selected===node.id)?null:node.id;
+          updateClasses();
+          updatePanel();
+        }
+      });
+    }
+
+    // Position
+    el.style.left = pos.x+"px";
+    el.style.top  = pos.y+"px";
+    el.style.transition = "left .28s cubic-bezier(.4,0,.2,1), top .28s cubic-bezier(.4,0,.2,1)";
+
+    // Text
+    const labelEl = el.querySelector("[data-role=label]");
+    labelEl.textContent = node.label;
+    labelEl.className = "node-label"+(isMatch?" match-text":"");
+    el.querySelector("[data-role=meta]").textContent = node.meta;
+
+    // Badge
+    let badge = el.querySelector(".toggle-badge");
+    if(hasC){
+      if(!badge){
+        badge=document.createElement("div");
+        badge.className="toggle-badge";
+        el.appendChild(badge);
+      }
+      badge.className = "toggle-badge "+(isColl?"collapsed":"expanded");
+      badge.textContent = isColl?"+":"−";
+    } else if(badge){
+      badge.remove();
+    }
+
+    // Count chip
+    let chip = el.querySelector(".count-chip");
+    if(isColl && origChildCount>0){
+      if(!chip){ chip=document.createElement("div"); chip.className="count-chip"; el.appendChild(chip); }
+      chip.textContent=origChildCount;
+    } else if(chip){ chip.remove(); }
+
+    // Classes
+    el.classList.remove("hovered","selected","match");
+    if(isMatch)          el.classList.add("match");
+    if(hovered===node.id) el.classList.add("hovered");
+    if(selected===node.id) el.classList.add("selected");
+  }
+
+  updatePanel();
+  updateMinimap();
+}
+
+function updateClasses(){
+  nodesLayer.querySelectorAll(".tree-node").forEach(el=>{
+    const id=el.dataset.id;
+    el.classList.remove("hovered","selected","match");
+    const node=findNode(TREE,id);
+    if(!node) return;
+    const isMatch=searchQ&&node.label.toLowerCase().includes(searchQ.toLowerCase());
+    if(isMatch)         el.classList.add("match");
+    if(hovered===id)    el.classList.add("hovered");
+    if(selected===id)   el.classList.add("selected");
+  });
+}
+
+function toggleCollapse(id){
+  if(collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+  render();
+}
+
+function findNode(n,id){
+  if(n.id===id) return n;
+  for(const c of n.children||[]){ const r=findNode(c,id); if(r) return r; }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════
+// INFO PANEL
+// ════════════════════════════════════════════════════════
+const infoPanel = document.getElementById("info-panel");
+function updatePanel(){
+  if(!selected){ infoPanel.style.display="none"; return; }
+  const n=findNode(TREE,selected);
+  if(!n){ infoPanel.style.display="none"; return; }
+  infoPanel.style.display="block";
+  document.getElementById("p-name").textContent=n.label;
+  document.getElementById("p-meta").textContent=n.meta;
+  document.getElementById("p-id").textContent=n.id;
+  document.getElementById("p-children").textContent=n.children?.length??0;
+}
+document.getElementById("deselect-btn").addEventListener("click",()=>{ selected=null; updateClasses(); updatePanel(); });
+
+// ════════════════════════════════════════════════════════
+// MINIMAP
+// ════════════════════════════════════════════════════════
+const minimapEl = document.getElementById("minimap");
+function updateMinimap(){
+  const allPos = Object.entries(positions);
+  if(allPos.length===0) return;
+  const xs=allPos.map(([,p])=>p.x), ys=allPos.map(([,p])=>p.y);
+  const minX=Math.min(...xs)-10, minY=Math.min(...ys)-10;
+  const maxX=Math.max(...xs)+NW+10, maxY=Math.max(...ys)+NH+10;
+  const tw=maxX-minX, th=maxY-minY;
+  const mw=140, mh=84, scale=Math.min(mw/tw,mh/th);
+
+  minimapEl.innerHTML="";
+  const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("width",mw); svg.setAttribute("height",mh);
+  svg.style.display="block";
+
+  for(const [id,pos] of allPos){
+    const rect=document.createElementNS("http://www.w3.org/2000/svg","rect");
+    const rx=(pos.x-minX)*scale, ry=(pos.y-minY)*scale;
+    rect.setAttribute("x",rx); rect.setAttribute("y",ry);
+    rect.setAttribute("width",NW*scale); rect.setAttribute("height",NH*scale);
+    rect.setAttribute("rx","2");
+    rect.setAttribute("fill", id===selected?"#f59e0b" : searchQ&&findNode(TREE,id)?.label.toLowerCase().includes(searchQ.toLowerCase())?"#34d399" : "#1e3a5f");
+    svg.appendChild(rect);
+  }
+  minimapEl.appendChild(svg);
+}
+
+// ════════════════════════════════════════════════════════
+// PAN & ZOOM
+// ════════════════════════════════════════════════════════
+const canvasWrap=document.getElementById("canvas-wrap");
+const canvas=document.getElementById("canvas");
+
+function applyTransform(){
+  canvas.style.transform=`translate(${pan.x}px,${pan.y}px) scale(${zoom})`;
+  canvas.style.transformOrigin="0 0";
+}
+
+function fitView(){
+  const allPos=Object.values(positions);
+  if(allPos.length===0) return;
+  const xs=allPos.map(p=>p.x), ys=allPos.map(p=>p.y);
+  const minX=Math.min(...xs)-60, minY=Math.min(...ys)-60;
+  const maxX=Math.max(...xs)+NW+60, maxY=Math.max(...ys)+NH+60;
+  const tw=maxX-minX, th=maxY-minY;
+  const vw=canvasWrap.clientWidth, vh=canvasWrap.clientHeight;
+  zoom=Math.min(vw/tw, vh/th, 1.5);
+  pan.x=(vw-tw*zoom)/2 - minX*zoom;
+  pan.y=(vh-th*zoom)/2 - minY*zoom;
+  applyTransform();
+}
+
+canvasWrap.addEventListener("mousedown",e=>{
+  if(e.target.closest(".tree-node")) return;
+  dragging=true; dragStart={x:e.clientX,y:e.clientY}; panStart={...pan};
+  canvasWrap.classList.add("panning");
+});
+window.addEventListener("mousemove",e=>{
+  if(!dragging) return;
+  pan.x=panStart.x+(e.clientX-dragStart.x);
+  pan.y=panStart.y+(e.clientY-dragStart.y);
+  applyTransform();
+});
+window.addEventListener("mouseup",()=>{ dragging=false; canvasWrap.classList.remove("panning"); });
+canvasWrap.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const delta=e.deltaY>0?-0.1:0.1;
+  const newZoom=Math.max(0.2,Math.min(3,zoom+delta));
+  const rect=canvasWrap.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  pan.x=mx-(mx-pan.x)*(newZoom/zoom);
+  pan.y=my-(my-pan.y)*(newZoom/zoom);
+  zoom=newZoom;
+  applyTransform();
+},{passive:false});
+
+// ════════════════════════════════════════════════════════
+// CONTROLS
+// ════════════════════════════════════════════════════════
+document.getElementById("expand-all").addEventListener("click",()=>{ collapsed.clear(); render(); setTimeout(fitView,50); });
+document.getElementById("collapse-all").addEventListener("click",()=>{
+  function collectParents(n){ if(n.children&&n.children.length>0){ collapsed.add(n.id); n.children.forEach(collectParents); } }
+  collectParents(TREE); render(); setTimeout(fitView,50);
+});
+document.getElementById("search").addEventListener("input",e=>{ searchQ=e.target.value; render(); });
+
+// ════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════
+render();
+setTimeout(fitView,80);
+window.addEventListener("resize",()=>{ fitView(); });
+</script>
+</body>
+</html>
